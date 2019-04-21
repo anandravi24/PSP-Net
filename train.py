@@ -114,8 +114,8 @@ def train(data_path, models_path, backend, snapshot, crop_x, crop_y, batch_size,
     mask_path = current + '/segmentation_data/annotations/training'
     models_path = current + '/models_path'
     
-    validation_path = current +'/segmentation_data/images/validation'
-    validation_mask = current + '/segmentation_data/annotations/validation'
+    validation_path = current +'/segmentation_dummy_data/images/validation'
+    validation_mask = current + '/segmentation_dummy_data/annotations/validation'
     
     
     #os.makedirs(models_path, exist_ok=True)
@@ -146,13 +146,14 @@ def train(data_path, models_path, backend, snapshot, crop_x, crop_y, batch_size,
     optimizer = optim.Adam(net.parameters(), lr=start_lr)
     scheduler = MultiStepLR(optimizer, milestones=[int(x) for x in milestones.split(',')])
     steps = 0
+    #val_loss = torch.Tensor([0])
+    val_all = []
     for epoch in range(starting_epoch, starting_epoch + epochs):
         seg_criterion = nn.NLLLoss2d(weight=class_weights)
         cls_criterion = nn.BCEWithLogitsLoss(weight=class_weights)
         epoch_losses = []
-        val_loss = 0
+        
         train_iterator = tqdm(training_loader, total=max_steps // batch_size + 1)
-        print(train_iterator)
         net.train()
         for x, y, y_cls in train_iterator:
             steps += batch_size
@@ -162,8 +163,8 @@ def train(data_path, models_path, backend, snapshot, crop_x, crop_y, batch_size,
             seg_loss, cls_loss = seg_criterion(out, y), cls_criterion(out_cls, y_cls)
             loss = seg_loss + alpha * cls_loss
             epoch_losses.append(loss.item())
-            #status = '[{0}] loss = {1:0.5f} avg = {2:0.5f}, LR = {5:0.7f}'.format(epoch + 1, loss.data[0], np.mean(epoch_losses), scheduler.get_lr()[0])
-            status = '[{0}] loss = {1:0.5f}  Validation_loss = {0}'.format(epoch + 1, loss.item(), val_loss)
+            #status = '[{0}] loss = {1:0.5f} avg = {2:0.5f}, LR = {3:0.7f}'.format(epoch + 1, loss.data[0], np.mean(epoch_losses), scheduler.get_lr()[0])
+            status = '[{0}] loss = {1:0.5f} val = {2:0.5f}'.format(epoch + 1, loss.item(), np.mean(val_all))
             train_iterator.set_description(status)
             loss.backward()
             optimizer.step()
@@ -172,11 +173,12 @@ def train(data_path, models_path, backend, snapshot, crop_x, crop_y, batch_size,
         train_loss = np.mean(epoch_losses)
         validation_iterator = tqdm(validation_loader)
         for x,y,y_cls in validation_iterator:
-            x,y,y_cls - Variable(x).cuda(), Variable(y).cuda(),Variable(y_cls).cuda()
+            val_all = []
+            x,y,y_cls = Variable(x).cuda(), Variable(y).cuda(),Variable(y_cls).cuda()
             out,out_cls = net(x)
             seg_loss, cls_loss = seg_criterion(out,y), cls_criterion(out_cls,y_cls)
             val_loss = seg_loss + alpha *cls_loss
-            
+            val_all.append(val_loss.item())
 
     #img = Image.open('mountain.jpg')
     #img = trans(img)
