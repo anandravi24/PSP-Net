@@ -10,6 +10,7 @@ from torch.autograd import Variable
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 import numpy
+from torch.utils import data
 
 from tqdm import tqdm
 import click
@@ -17,6 +18,52 @@ import numpy as np
 
 from pspnet import PSPNet
 from PIL import Image
+import cv2
+
+import glob
+
+
+current = os.getcwd()
+
+class Dataset(data.Dataset):
+    def __init__(self, datapath, maskpath, classes):
+        self.all_data = glob.glob(datapath +'/*.jpg')
+        self.all_mask = glob.glob(maskpath +'/*.png')
+        self.classes = classes
+
+    def __len__(self):
+        return len(self.all_data)
+
+    def __getitem__(self, index):
+        trans = transforms.Compose([
+        transforms.Resize((224,224)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+        
+        trans_mask = transforms.Compose([
+        transforms.Resize((224,224))])
+        #transforms.Resize(224)])
+        
+        img = Image.open(self.all_data[index])
+        img = img.convert('RGB')
+        img = trans(img)
+        img = img.type(torch.FloatTensor)
+        mask = Image.open(self.all_mask[index]).convert('L')
+        mask = trans_mask(mask)
+        y_cls = np.zeros(self.classes)
+        y_cls[np.unique(mask)] = 1
+        mask = transforms.ToTensor()(mask)
+        mask = mask.view(224,224)
+        mask = mask.type(torch.LongTensor)
+        y_cls = torch.from_numpy(y_cls)
+        y_cls = y_cls.type(torch.FloatTensor)
+        
+        
+        
+        return (img,mask,y_cls)
+
+
 
 
 models = {
@@ -40,7 +87,7 @@ def build_network(snapshot, backend):
         epoch = int(epoch)
         net.load_state_dict(torch.load(snapshot))
         logging.info("Snapshot for epoch {} loaded from {}".format(epoch, snapshot))
-    #net = net.cuda()
+    net = net.cuda()
     return net, epoch
 
 
@@ -63,10 +110,16 @@ def build_network(snapshot, backend):
 def train(data_path, models_path, backend, snapshot, crop_x, crop_y, batch_size, alpha, epochs, start_lr, milestones, gpu):
     os.environ["CUDA_VISIBLE_DEVICES"] = gpu
     net, starting_epoch = build_network(snapshot, backend)
-    #data_path = os.path.abspath(os.path.expanduser(data_path))
-    #models_path = os.path.abspath(os.path.expanduser(models_path))
-    #os.makedirs(models_path, exist_ok=True)
+    data_path = current +'/segmentation_data/images/training'
+    mask_path = current + '/segmentation_data/annotations/training'
+    models_path = current + '/models_path'
     
+    validation_path = current +'/segmentation_data/images/validation'
+    validation_mask = current + '/segmentation_data/annotations/validation'
+    
+    
+    #os.makedirs(models_path, exist_ok=True)
+
     '''
         To follow this training routine you need a DataLoader that yields the tuples of the following format:
         (Bx3xHxW FloatTensor x, BxHxW LongTensor y, BxN LongTensor y_cls) where
@@ -74,50 +127,64 @@ def train(data_path, models_path, backend, snapshot, crop_x, crop_y, batch_size,
         y - batch of groung truth seg maps,
         y_cls - batch of 1D tensors of dimensionality N: N total number of classes, 
         y_cls[i, T] = 1 if class T is present in image i, 0 otherwise
-    '''
-    #train_loader, class_weights, n_images = None, None, None
+ 
+   '''
+
+
+
+    training_dataset = Dataset(data_path, mask_path, classes = 112) 	
+    validation_dataset = Dataset(validation_path, validation_mask, classes = 112)
     
-    #optimizer = optim.Adam(net.parameters(), lr=start_lr)
-    #scheduler = MultiStepLR(optimizer, milestones=[int(x) for x in milestones.split(',')])
     
-    #for epoch in range(starting_epoch, starting_epoch + epochs):
-    #    seg_criterion = nn.NLLLoss2d(weight=class_weights)
-    #    cls_criterion = nn.BCEWithLogitsLoss(weight=class_weights)
-    #    epoch_losses = []
-    #    train_iterator = tqdm(loader, total=max_steps // batch_size + 1)
-    #    net.train()
-    #    for x, y, y_cls in train_iterator:
-    #        steps += batch_size
-    #        optimizer.zero_grad()
-    #        x, y, y_cls = Variable(x).cuda(), Variable(y).cuda(), Variable(y_cls).cuda()
-    #        out, out_cls = net(x)
-    #        seg_loss, cls_loss = seg_criterion(out, y), cls_criterion(out_cls, y_cls)
-    #        loss = seg_loss + alpha * cls_loss
-    #        epoch_losses.append(loss.data[0])
-    #        status = '[{0}] loss = {1:0.5f} avg = {2:0.5f}, LR = {5:0.7f}'.format(
-    #            epoch + 1, loss.data[0], np.mean(epoch_losses), scheduler.get_lr()[0])
-    #        train_iterator.set_description(status)
-    #        loss.backward()
-    #        optimizer.step()
-    #    scheduler.step()
-    #    torch.save(net.state_dict(), os.path.join(models_path, '_'.join(["PSPNet", str(epoch + 1)])))
-    #    train_loss = np.mean(epoch_losses)
+    training_loader = data.DataLoader(training_dataset, batch_size = 8)
+    validation_loader = data.Dataloader(validation_dataset)
+    
+    
+    max_steps = 2
+    train_loader, class_weights, n_images = None, None, None
+    
+    optimizer = optim.Adam(net.parameters(), lr=start_lr)
+    scheduler = MultiStepLR(optimizer, milestones=[int(x) for x in milestones.split(',')])
+    steps = 0
+    for epoch in range(starting_epoch, starting_epoch + epochs):
+        seg_criterion = nn.NLLLoss2d(weight=class_weights)
+        cls_criterion = nn.BCEWithLogitsLoss(weight=class_weights)
+        epoch_losses = []
+        val_loss = 0
+        train_iterator = tqdm(training_loader, total=max_steps // batch_size + 1)
+        net.train()
+        for x, y, y_cls in train_iterator:
+            steps += batch_size
+            optimizer.zero_grad()
+            x, y, y_cls = Variable(x).cuda(), Variable(y).cuda(), Variable(y_cls).cuda()
+            out, out_cls = net(x)
+            seg_loss, cls_loss = seg_criterion(out, y), cls_criterion(out_cls, y_cls)
+            loss = seq_loss + alpha * cls_loss
+            epoch_losses.append(loss.item())
+            #status = '[{0}] loss = {1:0.5f} avg = {2:0.5f}, LR = {5:0.7f}'.format(epoch + 1, loss.data[0], np.mean(epoch_losses), scheduler.get_lr()[0])
+            status = '[{0}] loss = {1:0.5f}  Validation_loss = {}'.format(epoch + 1, loss.item(), val_loss)
+            train_iterator.set_description(status)
+            loss.backward()
+            optimizer.step()
+        scheduler.step()
+        torch.save(net.state_dict(), os.path.join(models_path, '_'.join(["PSPNet", str(epoch + 1)])))
+        train_loss = np.mean(epoch_losses)
+        validation_iterator = tqdm(validation_loader)
+        for x,y,y_cls in validation_iterator:
+            x,y,y_cls - Variable(x).cuda(), Variable(y).cuda(),Variable(y_cls).cuda()
+            out,out_cls = net(x)
+            seg_loss, cls_loss = seg_criterion(out,y), cls_criterion(out_cls,y_cls)
+            val_loss = seg_loss + alpha *cls_loss
+            
 
-
-    trans = transforms.Compose([
-	transforms.Resize((224,224)),
-	transforms.ToTensor(),
-	transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-	])
-
-    img = Image.open('mountain.jpg')
-    img = trans(img)
-    print(img.shape)
-    prediction = net(img.view(1,3,224,224))
-    print(prediction[0].shape)
-    print(torch.argmax(prediction[0], dim=1).shape, prediction[1].shape)
+    #img = Image.open('mountain.jpg')
+    #img = trans(img)
+    #print(img.shape)
+    #prediction = net(img.view(1,3,224,224))
+    #print(prediction[0].shape)
+    #print(torch.argmax(prediction[0], dim=1).shape, prediction[1].shape)
     #plt.plot(prediction[0].view(224, 224).numpy())  
-    plt.show()                                
+    #plt.show()                                
 
        
 if __name__ == '__main__':
