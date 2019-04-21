@@ -137,7 +137,7 @@ def train(data_path, models_path, backend, snapshot, crop_x, crop_y, batch_size,
     
     
     training_loader = data.DataLoader(training_dataset, batch_size = 8)
-    validation_loader = data.Dataloader(validation_dataset)
+    validation_loader = data.DataLoader(validation_dataset)
     
     
     max_steps = 2
@@ -152,6 +152,7 @@ def train(data_path, models_path, backend, snapshot, crop_x, crop_y, batch_size,
         epoch_losses = []
         val_loss = 0
         train_iterator = tqdm(training_loader, total=max_steps // batch_size + 1)
+        print(train_iterator)
         net.train()
         for x, y, y_cls in train_iterator:
             steps += batch_size
@@ -159,10 +160,10 @@ def train(data_path, models_path, backend, snapshot, crop_x, crop_y, batch_size,
             x, y, y_cls = Variable(x).cuda(), Variable(y).cuda(), Variable(y_cls).cuda()
             out, out_cls = net(x)
             seg_loss, cls_loss = seg_criterion(out, y), cls_criterion(out_cls, y_cls)
-            loss = seq_loss + alpha * cls_loss
+            loss = seg_loss + alpha * cls_loss
             epoch_losses.append(loss.item())
             #status = '[{0}] loss = {1:0.5f} avg = {2:0.5f}, LR = {5:0.7f}'.format(epoch + 1, loss.data[0], np.mean(epoch_losses), scheduler.get_lr()[0])
-            status = '[{0}] loss = {1:0.5f}  Validation_loss = {}'.format(epoch + 1, loss.item(), val_loss)
+            status = '[{0}] loss = {1:0.5f}  Validation_loss = {0}'.format(epoch + 1, loss.item(), val_loss)
             train_iterator.set_description(status)
             loss.backward()
             optimizer.step()
