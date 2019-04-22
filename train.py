@@ -18,10 +18,11 @@ import numpy as np
 
 from pspnet import PSPNet
 from PIL import Image
-import cv2
+#import cv2
 
 import glob
 
+device = torch.device("cuda")
 
 current = os.getcwd()
 
@@ -81,13 +82,13 @@ def build_network(snapshot, backend):
     epoch = 0
     backend = backend.lower()
     net = models[backend]()
-    net = nn.DataParallel(net)
+    #net = nn.DataParallel(net)
     if snapshot is not None:
         _, epoch = os.path.basename(snapshot).split('_')
         epoch = int(epoch)
         net.load_state_dict(torch.load(snapshot))
         logging.info("Snapshot for epoch {} loaded from {}".format(epoch, snapshot))
-    net = net.cuda()
+    #net = net.cuda()
     return net, epoch
 
 
@@ -108,8 +109,10 @@ def build_network(snapshot, backend):
 
 
 def train(data_path, models_path, backend, snapshot, crop_x, crop_y, batch_size, alpha, epochs, start_lr, milestones, gpu):
-    os.environ["CUDA_VISIBLE_DEVICES"] = gpu
+   # os.environ["CUDA_VISIBLE_DEVICES"] = gpu
     net, starting_epoch = build_network(snapshot, backend)
+    net = nn.DataParallel(net)
+    net.to(device)
     data_path = current +'/segmentation_data/images/training'
     mask_path = current + '/segmentation_data/annotations/training'
     models_path = current + '/models_path'
@@ -136,7 +139,7 @@ def train(data_path, models_path, backend, snapshot, crop_x, crop_y, batch_size,
     validation_dataset = Dataset(validation_path, validation_mask, classes = 112)
     
     
-    training_loader = data.DataLoader(training_dataset, batch_size = 8)
+    training_loader = data.DataLoader(training_dataset, batch_size = 64, num_workers = 32)
     validation_loader = data.DataLoader(validation_dataset)
     
     
@@ -158,7 +161,7 @@ def train(data_path, models_path, backend, snapshot, crop_x, crop_y, batch_size,
         for x, y, y_cls in train_iterator:
             steps += batch_size
             optimizer.zero_grad()
-            x, y, y_cls = Variable(x).cuda(), Variable(y).cuda(), Variable(y_cls).cuda()
+            x, y, y_cls = x.to(device), y.to(device), y_cls.to(device)
             out, out_cls = net(x)
             seg_loss, cls_loss = seg_criterion(out, y), cls_criterion(out_cls, y_cls)
             loss = seg_loss + alpha * cls_loss
@@ -174,7 +177,7 @@ def train(data_path, models_path, backend, snapshot, crop_x, crop_y, batch_size,
         validation_iterator = tqdm(validation_loader)
         for x,y,y_cls in validation_iterator:
             val_all = []
-            x,y,y_cls = Variable(x).cuda(), Variable(y).cuda(),Variable(y_cls).cuda()
+            x,y,y_cls = x.to(device), y.to(device), y_cls.to(device)
             out,out_cls = net(x)
             seg_loss, cls_loss = seg_criterion(out,y), cls_criterion(out_cls,y_cls)
             val_loss = seg_loss + alpha *cls_loss
