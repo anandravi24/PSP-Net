@@ -95,13 +95,13 @@ def build_network(snapshot, backend):
 @click.command()
 @click.option('--data-path', type=str, help='Path to dataset folder')
 @click.option('--models-path', type=str, help='Path for storing model snapshots')
-@click.option('--backend', type=str, default='resnet50', help='Feature extractor')
+@click.option('--backend', type=str, default='resnet18', help='Feature extractor')
 @click.option('--snapshot', type=str, default=None, help='Path to pretrained weights')
 @click.option('--crop_x', type=int, default=256, help='Horizontal random crop size')
 @click.option('--crop_y', type=int, default=256, help='Vertical random crop size')
 @click.option('--batch-size', type=int, default=16)
 @click.option('--alpha', type=float, default=1.0, help='Coefficient for classification loss term')
-@click.option('--epochs', type=int, default=20, help='Number of training epochs to run')
+@click.option('--epochs', type=int, default=4, help='Number of training epochs to run')
 @click.option('--gpu', type=str, default='0', help='List of GPUs for parallel training, e.g. 0,1,2,3')
 @click.option('--start-lr', type=float, default=0.001)
 @click.option('--milestones', type=str, default='10,20,30', help='Milestones for LR decreasing')
@@ -113,8 +113,16 @@ def train(data_path, models_path, backend, snapshot, crop_x, crop_y, batch_size,
     net, starting_epoch = build_network(snapshot, backend)
     net = nn.DataParallel(net)
     net.to(device)
-    data_path = current +'/segmentation_data/images/training'
-    mask_path = current + '/segmentation_data/annotations/training'
+
+    # checkpoint = torch.load(current + '/models_path/PSPNet_4')
+    # net.load_state_dict(checkpoint['model_state_dict'])
+    net.load_state_dict(torch.load(current + '/models_path/PSPNet_4'))
+    #optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    #epoch = checkpoint['epoch']
+    #loss = checkpoint['loss']
+
+    data_path = current +'/segmentation_dummy_data/images/training'
+    mask_path = current + '/segmentation_dummy_data/annotations/training'
     models_path = current + '/models_path'
     
     validation_path = current +'/segmentation_dummy_data/images/validation'
@@ -139,12 +147,12 @@ def train(data_path, models_path, backend, snapshot, crop_x, crop_y, batch_size,
     validation_dataset = Dataset(validation_path, validation_mask, classes = 112)
     
     
-    training_loader = data.DataLoader(training_dataset, batch_size = 64, num_workers = 32)
+    training_loader = data.DataLoader(training_dataset, batch_size = 8, num_workers = 4)
     validation_loader = data.DataLoader(validation_dataset)
     
     
     max_steps = 2
-    train_loader, class_weights, n_images = None, None, None
+    #train_loader, class_weights, n_images = None, None, None
     
     optimizer = optim.Adam(net.parameters(), lr=start_lr)
     scheduler = MultiStepLR(optimizer, milestones=[int(x) for x in milestones.split(',')])
@@ -172,7 +180,8 @@ def train(data_path, models_path, backend, snapshot, crop_x, crop_y, batch_size,
             loss.backward()
             optimizer.step()
         scheduler.step()
-        torch.save(net.state_dict(), os.path.join(models_path, '_'.join(["PSPNet", str(epoch + 1)])))
+        #torch.save({'model_state_dict': net.module.state_dict(), 'optimizer_state_dict': optimizer.module.state_dict()}, os.path.join(models_path, '_'.join(["PSPNet", str(epoch + 1)])))
+        torch.save(net.module.state_dict(), os.path.join(models_path, '_'.join(["PSPNet", str(epoch + 1)])))
         train_loss = np.mean(epoch_losses)
         validation_iterator = tqdm(validation_loader)
         for x,y,y_cls in validation_iterator:
